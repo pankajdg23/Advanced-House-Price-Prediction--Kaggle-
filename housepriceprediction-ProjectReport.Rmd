@@ -1,0 +1,270 @@
+---
+title: "Project Report - House Price Prediction"
+output:
+  html_notebook: default
+  html_document: default
+date: "29-07-2017"
+---
+
+#### Product Demo:
+[House Price Estimator](http://shiny.bservices.online:3838/hprediction "House price Estimator")
+
+#### Submitted by:
+Sharath Ck </br>
+Pankaj Gaikwad </br>
+Kiran Chotalia </br>
+Vishal Sharma </br>
+
+Price of a property is one of the most important decision criterion when people buy homes. Real estate firms need to be consistent in their pricing in order to attract buyers. Having a predictive model for the same will be great tool to have, which in turn can also be used to tweak development of properties, putting more emphasis on qualities which increase the value of the property. 
+
+The goal of this project is to build algorithms which can predict the price of a house based on the characteristics/features of the house.  
+
+Loading required packages in R,
+
+```{r, warning=FALSE}
+library(dplyr)
+library(tree)
+library(Amelia)
+library(corrplot)
+library(randomForest)
+library(missForest)
+library(ggplot2)
+library(Matrix)
+library(readr)
+library(stringr)
+library(caret)
+library(car)
+library(data.table)
+library(reshape2)
+library(vcd)
+library(corrgram)
+library(mlbench)
+library(class)
+library(data.table)
+library(dplyr)
+library(fmsb)
+```
+
+House price dataset from kaggle competition is used for this project, which contains 80 variables and 1460 observations in the train and equal dimension in test data. Target feature is SalePrice which is a continous numeric variable.  
+
+</br>
+
+### Loading required datasets
+```{r, warning=FALSE}
+train <- read.csv("F:/Aegis/Capstone Project/Housepricedataset/train.csv")
+test <- read.csv("F:/Aegis/Capstone Project/Housepricedataset/test.csv")
+```  
+
+### Exploratory analysis on the data
+```{r, warning=FALSE}
+glimpse(train)
+```
+```{r, warning=FALSE, echo=FALSE}
+attach(train)
+```
+
+```{r}
+par(mfrow=c(1,2))
+hist(MoSold)
+hist(SalePrice)
+```
+```{r}
+colSums(is.na(train));
+```
+```{r}
+colSums(is.na(test));
+```
+Inspecting above w.r.t Train and Test data set for the missing values.
+
+```{r, warning=FALSE}
+train_num<-train[,sapply(train,is.numeric)]
+train_fact<-train[,sapply(train,is.factor)]
+sapply(train_fact,nlevels)
+
+Mode <- function (x, na.rm) {
+  xtab <- table(x)
+  xmode <- names(which(xtab == max(xtab)))
+  if (length(xmode) > 1) xmode <- ">1 mode"
+  return(xmode)
+}
+sum(is.na(train_fact))
+
+#Replacing NA vakues by mode of that particular column
+for (var in 1:ncol(train_fact)) {
+  if (class(train_fact[,var]) %in% c("character", "factor")) {
+    train_fact[is.na(train_fact[,var]),var]  <- Mode(train_fact[,var],na.rm=TRUE)
+  }
+}
+#Replacing NA values in numeric data by its mean
+for (var in 1:ncol(train_num)) {
+  if (class(train_num[,var]) %in% c("numeric","integer")) {
+    train_num[is.na(train_num[,var]),var] <- mean(train_num[,var], na.rm = TRUE)
+  } 
+}
+
+train<-data.frame(cbind(train_num,train_fact))
+colSums(is.na(train))
+dim(train)
+```
+Missing value's imputation for numerical and categorical features for the Train dataset.
+
+### Data Visualization
+#### Correlation heat map using qplot
+```{r, warning=FALSE}
+qplot(x=Var1, y=Var2, data = melt(cor(train[,sapply(train, is.numeric)]), use="p"), fill=value, geom="tile") +
+  scale_fill_gradient2(limits=c(-1, 1)) +
+  theme(axis.text.x = element_text(angle = 45,hjust=1))
+```
+Dense parts on the diagonal line are 1, because they are correlation coefficients of the same column such as id, MSSubClass, and so on. The opposite side across the diagonal line is symmetrical with respect to the line because it is just looking at the correlation by swapping the items. There seems to be a correlation between darker colors. GarageYrBlt · GarageCars · GarageArea seems to have positive correlations respectively. Also correlation seems acceptable positive between X1stFlrSF and TotalBsmtSF. And other positive correlation can be considered for LotArea-LotFrontage,YearRemodAdd-YearBuilt.
+
+####Rank Features by importance
+```{r,warning=FALSE}
+set.seed(7)
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+model <- train(SalePrice~., data=train, method="knn", preProcess="scale", trControl=control)
+importance <- varImp(model, scale=FALSE)
+importance.df <- as.data.frame(importance$importance)
+importance.overall<-subset(importance.df,importance.df$Overall>0.2)
+print(importance.overall)
+importance.df.new<-setDT(importance.overall, keep.rownames = TRUE)[]
+importance.accepted <-importance.df.new[order(importance.df.new$Overall,decreasing = T)]
+accepted.variables <- importance.accepted[,1]
+train.reduced <- subset(train,select = c(OverallQual,GrLivArea,TotalBsmtSF,GarageArea,GarageCars,ExterQual,X1stFlrSF,BsmtQual,KitchenQual,FullBath,GarageFinish,TotRmsAbvGrd,YearBuilt,BsmtFinSF1,X2ndFlrSF,YearRemodAdd,MasVnrArea,GarageYrBlt,Fireplaces,SalePrice))
+plot(importance)
+
+```
+Above algorithm uses pattern recognition and knn for feature selection using the importance of the features respectively.
+
+#### One hot encoding
+```{r, warning=FALSE}
+cat_ohe <- names(train.reduced)[sapply(train.reduced, class) == "factor"]
+num_ohe <- names(train.reduced)[sapply(train.reduced, class) == "numeric"]
+cat_var <- paste(cat_ohe, collapse = " + ")
+dummies <- dummyVars(~ ExterQual + BsmtQual + KitchenQual + GarageFinish, data = train.reduced)
+train_all <- as.data.frame(predict(dummies, newdata = train.reduced))
+train_combined <- cbind(train.reduced[,c(which(colnames(train.reduced) %in% num_ohe))],train_all)
+```
+This part includes feature engineering by using one hot encoding technique for both factor and numeric variables.
+
+#### Linear Regression & testing the performance improvement.
+```{r, warning=FALSE, echo=FALSE}
+train_t<-train_combined[1:1000,-1]
+train_cv<-train_combined[c(1001:1460),-1]
+lmModel <- lm(formula = (SalePrice~.),data = train_t)
+summary(lmModel)
+
+VIF(lmModel)
+lmModel.reduced <- step(lmModel)
+summary(lmModel.reduced)
+```
+Variance Inflation Factor:6.346615, below 10 is pretty good for model fitting.With significant variability, Adjusted R-squared:  0.8384.in the former and 0.8392 in the improved model.
+
+#### Cross Validating the accuracy of the model
+```{r}
+lmModel.cv <- predict(lmModel.reduced,newdata = train_cv)
+p <- ggplot(aes(x=ObservedResponses, y=FittedResponses),
+  data=data.frame(ObservedResponses=train_cv$SalePrice, FittedResponses=predict(lmModel.reduced, train_cv)))
+p + geom_point() +
+	geom_abline(color="red") +
+	ggtitle("Linear Regression")
+```
+
+#### Predicting over the test data set.
+```{r}
+test_num<-test[,sapply(test,is.numeric)]
+test_fact<-test[,sapply(test,is.factor)]
+for (var in 1:ncol(test_fact)) {
+  if (class(test_fact[,var]) %in% c("character", "factor")) {
+    test_fact[is.na(test_fact[,var]),var]  <- Mode(test_fact[,var],na.rm=TRUE)
+  }
+}
+for (var in 1:ncol(test_num)) {
+  if (class(test_num[,var]) %in% c("numeric","integer")) {
+    test_num[is.na(test_num[,var]),var] <- mean(test_num[,var], na.rm = TRUE)
+  } 
+}
+test<-data.frame(cbind(test_num,test_fact))
+test.reduced <- subset(test,select = c(OverallQual,GrLivArea,TotalBsmtSF,GarageArea,GarageCars,ExterQual,X1stFlrSF,BsmtQual,KitchenQual,FullBath,GarageFinish,TotRmsAbvGrd,YearBuilt,BsmtFinSF1,X2ndFlrSF,YearRemodAdd,MasVnrArea,GarageYrBlt,Fireplaces))
+cat_ohe <- names(test.reduced)[sapply(test.reduced, class) == "factor"]
+num_ohe <- names(test.reduced)[sapply(test.reduced, class) == "numeric"]
+cat_var <- paste(cat_ohe, collapse = " + ")
+dummies <- dummyVars(~ ExterQual + BsmtQual + KitchenQual + GarageFinish, data = test.reduced)
+test_all <- as.data.frame(predict(dummies, newdata = test.reduced))
+test_combined <- cbind(test.reduced[,c(which(colnames(test.reduced) %in% num_ohe))],test_all)
+
+lmModel.test.predict <- predict(lmModel.reduced,newdata = test_combined)
+print(head(lmModel.test.predict))
+```
+
+### Random Forest Regression
+
+```{r}
+#Loading required datasets
+hp <- read.csv("F:/Aegis/Capstone Project/Housepricedataset/train.csv")
+```  
+
+Variables with highest number of missing values are:  PoolQC, MiscFeature and Alley. These variables can be essentially removed from the dataset.
+
+```{r, warning=FALSE}
+vars <- names(hp) %in% c("PoolQC", "MiscFeature", "Alley")
+hp <- hp[!vars]
+```
+
+#### Overcoming missing values
+
+Missing values are considered to be an obstacle in predictive modeling. However, these are not considered to be a constraint in tree based models. MissForest is an implementation of Random Forest algorithm which is a non-parametric imputation method applicable to various variable types. MissForest builds random forest model for each variable and it uses the model to predict missing values in the variable with the help of observed values.
+
+```{r, warning=FALSE}
+# Imputing missing values
+imp_hp <- missForest(hp)
+
+# Imputation error
+imp_hp$OOBerror
+```
+
+Normalized mean squared error which is derived from imputing numeric is 0.0006 and proportion of falsely classified which is the error derived from imputing categorical variables is 0.05. These can be slightly reduced by tuning the values of mtry and ntree parameter.
+
+```{r, warning=FALSE}
+#storing dataset with missing values imputed to a new dataset
+hp_imp <- imp_hp$ximp
+```
+
+
+### Random Forest implementation
+
+Random forests algorithm is not the best choice when it comes to regression problems. However, performance of RF comes close to linear regression in most scenarios. Random forests are indeed one of the best methods for feature selection from the data.
+
+```{r}
+
+#splitting data into train and test
+set.seed(3)
+train <- sample(1:nrow(hp_imp), 0.7*nrow(hp_imp))
+hp_train <- hp_imp[train,]
+hp_test <- hp_imp[-train,]
+
+rf_train <- randomForest(SalePrice~.-Id, data = hp_train)
+rf_train
+```
+
+% var explained can be understood as pseudo R^2.
+
+Checking performance of the model on test data:
+
+```{r}
+r2 <- (1 - (sum((hp_test$SalePrice-predict(rf_train, newdata = hp_test))^2)/sum((hp_test$SalePrice-mean(hp_test$SalePrice))^2)))
+r2
+```
+
+#### Plot of Observed Responses versus Fitted Responses
+
+```{r}
+p <- ggplot(aes(x=ObservedResponses, y=FittedResponses),
+  data=data.frame(ObservedResponses=hp_test$SalePrice, FittedResponses=predict(rf_train, hp_test)))
+p + geom_point() +
+	geom_abline(color="red") +
+	ggtitle(paste("Random Forest Regression with r^2=", r2, sep=""))
+
+```
+
+-----------------------------------------------------------------------
+
